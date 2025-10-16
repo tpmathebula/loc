@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trip Price Calculator & Navigator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    
+    <style>
+        /* -------------------------------------
+           PWA-STYLE CSS FOR BEAUTIFICATION
+           ------------------------------------- */
+        :root {
+            --primary-color: #007bff; /* Google Blue */
+            --secondary-color: #f8f9fa; /* Light background */
+            --text-color: #343a40;
+            --success-color: #28a745;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        /* Base & Layout */
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: 'Roboto', sans-serif;
+            color: var(--text-color);
+            overflow: hidden; /* Prevent body scrolling */
+        }
+        
+        #app-container {
+            display: flex;
+            flex-direction: column; /* Stack vertically on small screens */
+            height: 100vh;
+        }
+
+        /* Header/Input Container (Floating Panel replacement) */
+        #header-container {
+            flex-shrink: 0; /* Don't let it shrink */
+            padding: 15px 20px;
+            background-color: #ffffff;
+            box-shadow: var(--shadow);
+            z-index: 10;
+        }
+        
+        .form-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        #destination {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        #submit {
+            padding: 10px 20px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        
+        #submit:hover {
+            background-color: #0056b3;
+        }
+        
+        /* Map Container */
+        #map-container {
+            flex-grow: 1; /* Takes up all remaining space */
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Trip Details Container (New dedicated div) */
+        #trip-details-container {
+            position: absolute; /* Position over the map */
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 5;
+            min-width: 300px;
+            padding: 15px;
+            background-color: rgba(255, 255, 255, 0.95); /* Semi-transparent white */
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            display: none; /* Hidden until a route is calculated */
+            text-align: left;
+        }
+        
+        #output-panel {
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+
+        #output-panel strong {
+            color: var(--primary-color);
+        }
+
+        #price-display {
+            font-size: 1.4em;
+            color: var(--success-color);
+            font-weight: 700;
+            margin-top: 5px;
+        }
+        
+        /* Mobile adjustments (PWA look) */
+        @media (max-width: 600px) {
+            #header-container {
+                padding: 10px;
+            }
+            .form-group {
+                flex-direction: column;
+                gap: 5px;
+            }
+            #destination, #submit {
+                width: 100%;
+            }
+            #trip-details-container {
+                width: 90%;
+            }
+        }
+
+    </style>
+    <script 
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACc2HVPm-MP51naGSmVxtwGXRCpYWlllk&callback=initMap&v=weekly" 
+        defer
+    ></script>
+</head>
+<body>
+
+    <div id="app-container">
+        
+        <div id="header-container">
+            <p style="margin: 0 0 10px 0; font-weight: bold;">
+                🚗 **Origin:** Your Current Location (Auto-detected)
+            </p>
+            <div class="form-group">
+                <label for="destination">Destination:</label>
+                <input id="destination" type="text" placeholder="Enter landmark or address..." value="Sandton, Johannesburg" />
+                <input id="submit" type="button" value="Get Route & Price" />
+            </div>
+        </div>
+
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+
+        <div id="trip-details-container">
+            <div id="output-panel">Press the button to get started!</div>
+            <div id="price-display"></div>
+        </div>
+        
+    </div>
+
+    <script>
+        let map;
+        let directionsService;
+        let directionsRenderer;
+        
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 7, 
+                // Set initial center near current location (eMalahleni)
+                center: { lat: -25.8732, lng: 29.2133 }, 
+            });
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({ map: map });
+
+            document.getElementById("submit").addEventListener("click", calculateAndDisplayRoute);
+            
+            // Show initial instruction
+            document.getElementById("trip-details-container").style.display = 'block';
+        }
+
+        function calculateAndDisplayRoute() {
+            document.getElementById("output-panel").innerHTML = "📍 **Locating you...**";
+            document.getElementById("price-display").innerHTML = ""; // Clear price
+            
+            const destination = document.getElementById("destination").value;
+            if (!destination) {
+                document.getElementById("output-panel").innerHTML = "🛑 **Please enter a destination.**";
+                return;
+            }
+
+            // STEP A: Get Current Location
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const origin = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude,
+                        };
+                        requestRoute(origin, destination);
+                    },
+                    (error) => {
+                        document.getElementById("output-panel").innerHTML = "❌ **Location Error:** Could not get current location. (Error Code: " + error.code + ")";
+                        document.getElementById("price-display").innerHTML = "";
+                        console.error("Geolocation Error:", error);
+                    }
+                );
+            } else {
+                document.getElementById("output-panel").innerHTML = "❌ **Browser Error:** Geolocation is not supported.";
+            }
+        }
+
+        function requestRoute(origin, destination) {
+            document.getElementById("output-panel").innerHTML = "🗺️ **Calculating route and price...**";
+
+            directionsService
+                .route({
+                    origin: origin,
+                    destination: destination,
+                    travelMode: google.maps.TravelMode.DRIVING,
+                })
+                .then((response) => {
+                    if (response.routes && response.routes.length > 0) {
+                        
+                        directionsRenderer.setDirections(response); // Draw the route
+
+                        const route = response.routes[0].legs[0];
+                        const distanceText = route.distance.text;
+                        const duration = route.duration.text;
+                        const distanceValueMeters = route.distance.value;
+
+                        // PRICE CALCULATION LOGIC
+                        const PRICE_PER_KM = 5; // R5 per kilometer
+                        const distanceKm = distanceValueMeters / 1000; 
+                        const totalPrice = distanceKm * PRICE_PER_KM;
+                        const formattedPrice = totalPrice.toFixed(2);
+                        
+                        // Update the Trip Details Container
+                        document.getElementById("output-panel").innerHTML = `
+                            ✅ **Route Details**<br>
+                            **Distance:** ${distanceText}<br>
+                            **Estimated Time:** ${duration}<br>
+                        `;
+                        document.getElementById("price-display").innerHTML = `
+                            Trip Price: **R${formattedPrice}**
+                        `;
+
+                    } else {
+                        document.getElementById("output-panel").innerHTML = "❌ No route found to that destination.";
+                        document.getElementById("price-display").innerHTML = "";
+                    }
+                })
+                .catch((e) => {
+                    document.getElementById("output-panel").innerHTML = "❌ **API Error:** Directions request failed.";
+                    document.getElementById("price-display").innerHTML = "";
+                    console.error("Directions Service Error:", e);
+                });
+        }
+    </script>
+</body>
+</html>
